@@ -2,7 +2,8 @@
 
 Author: Vasco Rodrigues,  nº20231676
 
-In the beggining the logistic regression is giving better scores than the decision tree (better f1 scores and better precision)
+In the beggining the logistic regression is giving better scores than the decision tree:better f1 scores (F1 Score: 0.68 vs 0.63)
+
 s
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
 
