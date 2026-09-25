@@ -12,10 +12,21 @@ split:
   random_state: 42
 
 model:
-  type: "decision_tree"   # or "decision_tree" or logistic_regression
+  type: "logistic_regression"   # or "decision_tree" or logistic_regression
   params:
     #max_iter: 1000
     random_state: 42
+
+preprocessing:
+  encoder: "target"
+  scaler: "standard"
+  numeric_features: ["age", "juv_fel_count", "juv_misd_count", "juv_other_count", "priors_count"]
+  categorical_features: ["sex", "age_cat", "c_charge_degree"]
+  mnar_indicator_sources: ["priors_count", "c_charge_degree"]
+  imputation:
+    numeric_strategy: median
+    categorical_strategy: most_frequent
+
 output:
   results_dir: "results"   # each run's full report is saved here as a timestamped .txt file
 

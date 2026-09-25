@@ -3,10 +3,16 @@
 Author: Vasco Rodrigues,  nº20231676
 
 Week1:
-In the beggining the logistic regression is giving better scores than the decision tree:better f1 scores (F1 Score: 0.68 vs 0.63)
+In the beggining the logistic regression is giving better scores than the decision tree
 
 Week2:
 
+After applying the preprocessing steps in the pipeline , taking into account diagnostic results seen in class, logistic regression is performing better than decision trees:
+
+  Test accuracy: 0.658 vs. 0.605 for Decision Tree
+  Train/test gap: +0.018 vs. +0.189
+
+The big gap between training and testing for DT shows the model is overfitting.
 
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
 
