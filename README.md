@@ -1,4 +1,11 @@
 # Baseline Predictive Pipeline -- ETAI 
+!!!!!Change Read Me and hold out vs cross validation!!!!!!! Week3 add preprocessig to piepline using holdout compare with week3 
+
+add cv to pipeline comapre before vs after cv 
+
+
+both can be done at once add the new models to piepline (dummies &RF)
+change something in your pipeline imputer ___> knn, encoder, etc... can you get a better modeling pipeline?
 
 Author: Vasco Rodrigues,  nº20231676
 
