@@ -20,9 +20,11 @@ def save_run(results_dir: str, config: dict, report_text: str) -> str:
 
     header = (
         f"Run: {timestamp}\n"
-        f"Model: {config['model']['type']}  params={config['model']['params']}\n"
-        f"Test size: {config['split']['test_size']}  "
-        f"random_state: {config['split']['random_state']}\n"
+        f"Model: {config['model']['type']}  params={config['model'].get('params')}\n"
+        f"Preprocessing: encoder={config['preprocessing']['encoder']}  scaler={config['preprocessing']['scaler']}  "
+        f"imputation={config['preprocessing'].get('imputation')}\n"
+        f"Locked test set: size={config['test_set']['size']}  random_state={config['test_set']['random_state']}\n"
+        f"CV: {config['cv']}\n"
         + "=" * 60 + "\n\n"
     )
 

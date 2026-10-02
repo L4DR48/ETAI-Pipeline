@@ -1,12 +1,4 @@
 # Baseline Predictive Pipeline -- ETAI 
-!!!!!Change Read Me and hold out vs cross validation!!!!!!! Week3 add preprocessig to piepline using holdout compare with week3 
-
-add cv to pipeline comapre before vs after cv 
-
-
-both can be done at once add the new models to piepline (dummies &RF)
-change something in your pipeline imputer ___> knn, encoder, etc... can you get a better modeling pipeline?
-
 Author: Vasco Rodrigues,  nº20231676
 
 Week1:
@@ -57,6 +49,33 @@ This table is updated after each practical class, so you can always see what cha
 | Week | Practical class focus | Added to the pipeline |
 |------|------------------------|------------------------|
 | 2 | Introduction & baseline pipeline | Initial version: project structure, a single naive train/test split (no cross-validation), minimal preprocessing (drop rows with missing values, one-hot encode categoricals), logistic regression baseline, a first (deliberately simple) fairness check comparing our model's and COMPAS's own false-positive rate by race, train-vs-test accuracy reporting (to start spotting overfitting), and each run's full report saved automatically to `results/` |
+| 3 | EDA and data diagnosis | Diagnosis-driven cleaning applied through `clean_dataset()` and the `diagnostics` section of `config.yaml`: placeholder tokens and out-of-range values (`validity_rules`) become `NaN`, category spellings are canonicalised, duplicate rows/ids and redundant (multicollinear) columns are removed; imputation matched to the missingness mechanism (median for MCAR numerics, most frequent for categoricals) plus `_was_missing` flags for the MNAR columns (`priors_count`, `c_charge_degree`); configurable encoder (`onehot`/`ordinal`/`count`/`target`) and scaler (`none`/`standard`/`minmax`/`robust`) in a `ColumnTransformer` placed inside the model `Pipeline`, so everything is fitted on training rows only; evaluation still a single holdout split |
+| 4 | Preprocessing recipe + cross-validation | Locked test set (`test_set` in `config.yaml`, 20%, seed 42, never changed); stratified 5-fold CV of the whole pipeline (preprocessing + model) on the development set (`cv` section); out-of-fold predictions for the classification report and fairness check; final model refit on all development rows; row-preserving `clean_dataset()` + training-only `drop_duplicate_rows()`; sklearn `TargetEncoder`, robust scaling; new `dummy` and `random_forest` models; new `knn` numeric imputation option |
+
+## Model evaluation
+
+Evaluation uses a locked test set (20%, never touched) plus stratified 5-fold CV of the whole pipeline on the remaining development set. Imputation, encoding and scaling are re-fitted inside every fold, so validation rows never influence them. Holdout = one 75/25 split of the development set (seed 42).
+
+| Model | Holdout accuracy | CV accuracy (mean ± std) | CV train–val gap |
+|---|---|---|---|
+| Dummy | 0.550 | 0.549 ± 0.000 | -0.000 |
+| Logistic regression | 0.674 | 0.672 ± 0.013 | +0.003 |
+| Decision tree | 0.591 | 0.610 ± 0.018 | +0.085 |
+| Random forest (300 trees) | 0.644 | 0.650 ± 0.018 | +0.083 |
+
+The CV mean is the number to trust: it uses every development row for validation and reports its spread, whereas one holdout split is a single draw (the tree moves 0.591 -> 0.610). The week 2/3 conclusion holds: logistic regression is best and the only model that does not overfit; the untuned forest and the tree beat the dummy but have a train–val gap of about 0.08.
+
+### Imputation experiment: median vs KNN
+
+Same folds (`cv.random_state: 42`), only `imputation.numeric_strategy` changed (`knn` = `KNNImputer(n_neighbors=5)`, scaling applied before imputing).
+
+| Model | Holdout median / KNN | CV median | CV KNN | Mean per-fold difference (KNN − median) |
+|---|---|---|---|---|
+| Logistic regression | 0.674 / 0.676 | 0.672 ± 0.013 | 0.673 ± 0.013 | +0.0005 |
+| Decision tree | 0.591 / 0.608 | 0.610 ± 0.018 | 0.596 ± 0.014 | -0.013 |
+| Random forest | 0.644 / 0.633 | 0.650 ± 0.018 | 0.647 ± 0.017 | -0.004 |
+
+The holdout suggested KNN helps the tree (+0.017) and hurts the forest (-0.011); CV shows the opposite sign for the tree and differences within one fold-std for every model. KNN imputation brings no real gain here (few missing values), so `median` stays in `config.yaml`.
 
 ## Environment setup
 

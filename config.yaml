@@ -7,24 +7,38 @@ data:
   sensitive_attr: "race"          # excluded from model features, used only to audit fairness
   drop_columns: ["id", "decile_score", "score_text"]  # identifiers / COMPAS's own score, not our model's inputs
 
-split:
-  test_size: 0.2
+# The FINAL TEST SET: carved out once, stratified, locked. Never used to fit, tune, compare or choose.
+# Do not change these two values -- a new seed would give a different (already partly "seen") test set.
+test_set:
+  size: 0.2
   random_state: 42
 
+# Stratified k-fold CV on the development set (everything except the locked test set).
+# Same random_state = same folds for every model, so comparisons are like-for-like.
+cv:
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+  scoring: "accuracy"
+  n_jobs: 1             # -1 = all cores (only pays off for slow models, e.g. random forest)
+
 model:
-  type: "logistic_regression"   # or "decision_tree" or logistic_regression
+  type: "logistic_regression"   # dummy | logistic_regression | decision_tree | random_forest
   params:
-    #max_iter: 1000
+    max_iter: 2000
     random_state: 42
+    # random_forest example: n_estimators: 300, n_jobs: -1
 
 preprocessing:
-  encoder: "target"
-  scaler: "standard"
+  encoder: "target"             # onehot | ordinal | count | target
+  scaler: "robust"              # none | standard | minmax | robust
+  random_state: 42
   numeric_features: ["age", "juv_fel_count", "juv_misd_count", "juv_other_count", "priors_count"]
   categorical_features: ["sex", "age_cat", "c_charge_degree"]
   mnar_indicator_sources: ["priors_count", "c_charge_degree"]
   imputation:
-    numeric_strategy: median
+    numeric_strategy: median    # median | mean | knn
+    n_neighbors: 5              # only used when numeric_strategy is knn
     categorical_strategy: most_frequent
 
 output:

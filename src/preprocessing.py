@@ -7,13 +7,16 @@ diagnosis-driven cleaning functions are integrated into the pipeline.
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.model_selection import train_test_split
+from sklearn.impute import KNNImputer, SimpleImputer
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler, MinMaxScaler, RobustScaler
-from category_encoders import CountEncoder, TargetEncoder
+from sklearn.preprocessing import (
+    OneHotEncoder, OrdinalEncoder, TargetEncoder, StandardScaler, MinMaxScaler, RobustScaler,
+)
+from category_encoders import CountEncoder
 
-def canonicalize_categories(df: pd.DataFrame, columns_and_maps: dict, placeholder_tokens: set) -> pd.DataFrame:
+
+def _canonicalize_categories(df: pd.DataFrame, columns_and_maps: dict, placeholder_tokens: set) -> pd.DataFrame:
     out = df.copy()
     for col, mapping in columns_and_maps.items():
         if col not in out.columns:
@@ -25,45 +28,67 @@ def canonicalize_categories(df: pd.DataFrame, columns_and_maps: dict, placeholde
     return out
 
 
-def clean_dataset(df: pd.DataFrame, diagnosis: dict) -> pd.DataFrame:
+def flag_invalid_values(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
     """
-    Apply the EDA notebook's diagnosis: category cleanup, domain-rule / placeholder ->
-    NaN conversion, de-duplication, redundant-column removal. Target-column-agnostic --
-    safe to call on label-free inference data.
+    Applies a dict of {column: {"min": ..., "max": ...}} domain rules (either bound is
+    optional) and converts violations to NaN **in place** on `df`. An "impossible but
+    not missing" value (an age of -3, a COMPAS decile score of 15) counts as missing
+    once this runs -- `.isna()` alone would never have caught it.
+
+    Returns a small report: how many violations were found per column.
+    """
+    report_rows = []
+    for column, bounds in rules.items():
+        if column not in df.columns:
+            continue
+        numeric = pd.to_numeric(df[column], errors="coerce")
+        lower_ok = numeric >= bounds["min"] if "min" in bounds else pd.Series(True, index=numeric.index)
+        upper_ok = numeric <= bounds["max"] if "max" in bounds else pd.Series(True, index=numeric.index)
+        violations = numeric.notna() & ~(lower_ok & upper_ok)
+        report_rows.append({"column": column, "rule": bounds, "violations": int(violations.sum())})
+        df.loc[violations, column] = np.nan
+    return pd.DataFrame(report_rows)
+
+
+def clean_dataset(df: pd.DataFrame, diagnostics_config: dict) -> pd.DataFrame:
+    """
+    Applies the week 3 diagnosis: category cleanup, domain-rule/placeholder -> NaN
+    conversion, and redundant-column removal. Target-agnostic -- safe to call on
+    label-free inference data, since none of this depends on a target column.
+
+    Row-preserving (week 4): every input row comes out, in the same order. Removing
+    duplicate rows is a *training-only* decision and lives in `drop_duplicate_rows()` --
+    at prediction time every row needs a prediction (a Kaggle submission needs one per id).
     """
     out = df.copy()
-    placeholder_tokens = set(diagnosis["placeholder_tokens"])
+    placeholder_tokens = set(diagnostics_config.get("placeholder_tokens", []))
 
-    # numeric columns that loaded as text because of placeholder tokens
-    for col in diagnosis.get("numeric_text_columns", ["priors_count", "prior_offenses"]):
+    # numeric columns that load as text purely because of a placeholder token
+    for col in diagnostics_config.get("numeric_text_columns", []):
         if col in out.columns:
             out[col] = pd.to_numeric(out[col].replace(list(placeholder_tokens), np.nan), errors="coerce")
 
-    # domain-rule violations -> NaN
-    for col, rule in diagnosis.get("validity_rules", {}).items():
-        if col not in out.columns:
-            continue
-        invalid = out[col].notna()
-        if "min" in rule:
-            invalid &= out[col] < rule["min"]
-        if "max" in rule:
-            invalid |= out[col].notna() & (out[col] > rule["max"])
-        out.loc[invalid, col] = np.nan
+    flag_invalid_values(out, diagnostics_config.get("validity_rules", {}))
 
-    # category canonicalization (also folds placeholder tokens to NaN)
-    category_maps = diagnosis.get("canonical_categories", diagnosis.get("canonical_maps", {}))
-    out = canonicalize_categories(out, category_maps, placeholder_tokens)
+    out = _canonicalize_categories(out, diagnostics_config.get("canonical_categories", {}), placeholder_tokens)
 
-    # duplicates: exact row dupes and repeated ids point at the same rows here -- drop, keep first
-    out = out.drop_duplicates()
-    if "id" in out.columns:
-        out = out.drop_duplicates(subset="id", keep="first")
+    columns_to_drop = [c for c in diagnostics_config.get("redundant_columns", []) if c in out.columns]
+    out = out.drop(columns=columns_to_drop)
 
-    # redundant columns found via multicollinearity
-    columns_to_drop = diagnosis.get("redundant_columns", diagnosis.get("columns_to_drop", []))
-    cols_to_drop = [c for c in columns_to_drop if c in out.columns and c != "id"]
-    out = out.drop(columns=cols_to_drop)
+    return out
 
+
+def drop_duplicate_rows(df: pd.DataFrame, id_column: str = None) -> pd.DataFrame:
+    """
+    TRAINING DATA ONLY (week 4). Drops exact duplicate rows and repeated ids (keeping
+    the first), so the same person can't be counted twice -- or land in both the
+    development and the locked test set. Must run *before* `split_dev_test()`.
+
+    Never call this on data you're predicting for: every row there needs a prediction.
+    """
+    out = df.drop_duplicates()
+    if id_column and id_column in out.columns:
+        out = out.drop_duplicates(subset=id_column, keep="first")
     return out
 
 
@@ -100,10 +125,10 @@ _SCALERS = {
     "robust": RobustScaler,
 }
 _ENCODERS = {
-    "onehot": lambda: OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-    "ordinal": lambda: OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
-    "count": lambda: CountEncoder(handle_unknown=0, handle_missing=0),
-    "target": lambda: TargetEncoder(handle_unknown="value", handle_missing="value"),
+    "onehot": lambda seed: OneHotEncoder(handle_unknown="ignore", sparse_output=False),
+    "ordinal": lambda seed: OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+    "count": lambda seed: CountEncoder(handle_unknown=0, handle_missing=0),
+    "target": lambda seed: TargetEncoder(target_type="binary", cv=5, shuffle=True, random_state=seed),
 }
 
 
@@ -123,13 +148,21 @@ def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
 
     scaler_factory = _SCALERS[scaler_name]
     scaler = scaler_factory() if callable(scaler_factory) else scaler_factory
-    encoder = _ENCODERS[encoder_name]()
+    encoder = _ENCODERS[encoder_name](preprocessing_config.get("random_state"))
     indicator_cols = [f"{c}_was_missing" for c in mnar_indicator_sources]
 
-    numeric_pipeline = Pipeline([
-        ("impute", SimpleImputer(strategy=imputation.get("numeric_strategy", "median"))),
-        ("scale", scaler),
-    ])
+    numeric_strategy = imputation.get("numeric_strategy", "median")
+    if numeric_strategy == "knn":
+        # KNN uses distances, so scale first (scalers ignore NaN when fitting), then impute
+        numeric_pipeline = Pipeline([
+            ("scale", scaler),
+            ("impute", KNNImputer(n_neighbors=imputation.get("n_neighbors", 5))),
+        ])
+    else:
+        numeric_pipeline = Pipeline([
+            ("impute", SimpleImputer(strategy=numeric_strategy)),
+            ("scale", scaler),
+        ])
     categorical_pipeline = Pipeline([
         ("impute", SimpleImputer(strategy=imputation.get("categorical_strategy", "most_frequent"))),
         ("encode", encoder),
@@ -142,9 +175,13 @@ def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
     ])
 
 
-def split_train_test(X, y, extras, test_size: float, random_state: int):
-    """Keep features, labels, and audit columns aligned through a stratified split."""
-    X_train, X_test, y_train, y_test, extras_train, extras_test = train_test_split(
+def split_dev_test(X, y, extras, test_size: float, random_state: int):
+    """
+    Sets the locked test set aside (stratified; X, y and extras stay row-aligned).
+    The development set is what CV learns from and compares models on; the test set is
+    never used to fit, tune, compare or choose anything.
+    """
+    X_dev, X_test, y_dev, y_test, extras_dev, extras_test = train_test_split(
         X, y, extras, test_size=test_size, random_state=random_state, stratify=y
     )
-    return X_train, X_test, y_train, y_test, extras_train, extras_test
+    return X_dev, X_test, y_dev, y_test, extras_dev, extras_test
