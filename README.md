@@ -23,6 +23,7 @@ go on.
 │   ├── preprocessing.py    # cleaning + train/test split
 │   ├── model.py             # model construction
 │   ├── evaluate.py         # accuracy metrics + fairness check
+│   ├── tuning.py           # Optuna search + nested cross-validation
 │   └── results.py          # saves each run's report to disk
 ├── results/                # created automatically -- one file per run (not tracked in git)
 └── data/
@@ -39,6 +40,22 @@ This table is updated after each practical class, so you can always see what cha
 | 2 | Introduction & baseline pipeline | Initial version: project structure, a single naive train/test split (no cross-validation), minimal preprocessing (drop rows with missing values, one-hot encode categoricals), logistic regression baseline, a first (deliberately simple) fairness check comparing our model's and COMPAS's own false-positive rate by race, train-vs-test accuracy reporting (to start spotting overfitting), and each run's full report saved automatically to `results/`. **Observation:** at the start, logistic regression already scored better than the decision tree |
 | 3 | EDA and data diagnosis | Diagnosis-driven cleaning applied through `clean_dataset()` and the `diagnostics` section of `config.yaml`: placeholder tokens and out-of-range values (`validity_rules`) become `NaN`, category spellings are canonicalised, duplicate rows/ids and redundant (multicollinear) columns are removed; imputation matched to the missingness mechanism (median for MCAR numerics, most frequent for categoricals) plus `_was_missing` flags for the MNAR columns (`priors_count`, `c_charge_degree`); configurable encoder (`onehot`/`ordinal`/`count`/`target`) and scaler (`none`/`standard`/`minmax`/`robust`) in a `ColumnTransformer` placed inside the model `Pipeline`, so everything is fitted on training rows only; evaluation still a single holdout split. **Observation:** after preprocessing with the class diagnosis, logistic regression beat the decision tree (test accuracy 0.658 vs. 0.605; train/test gap +0.018 vs. +0.189). The large gap shows the tree is overfitting |
 | 4 | Preprocessing recipe + cross-validation | Locked test set (`test_set` in `config.yaml`, 20%, seed 42, never changed); stratified 5-fold CV of the whole pipeline (preprocessing + model) on the development set (`cv` section); out-of-fold predictions for the classification report and fairness check; final model refit on all development rows; row-preserving `clean_dataset()` + training-only `drop_duplicate_rows()`; sklearn `TargetEncoder`, robust scaling; new `dummy` and `random_forest` models; new `knn` numeric imputation option. **Observation:** under 5-fold CV, logistic regression is still the best model (0.672 ± 0.013) and the only one that does not overfit (gap +0.003); the tree (0.610) and the untuned random forest (0.650) both have a train–val gap of about 0.08. A single holdout split was misleading (the tree moved 0.591 -> 0.610 under CV). KNN imputation gave no real improvement over the median, so the median stays|
+| 5 | Leakage-safe hyperparameter tuning | Optuna tunes pipeline parameters using cross-validation of the complete preprocessing/model pipeline; nested stratified CV estimates the tuning procedure on untouched outer folds; the final best recipe is tuned on all development rows and refit there. The locked test set is never used. |
+| 6 | Tree ensembles | Added oblique random forest (bagged sparse-projection trees) and AdaBoost (decision-tree weak learners); selected random forest as the default; configured search spaces for decision trees and all three ensembles; added nested-CV and full-development tuning reports. |
+
+## Ensemble evaluation
+
+The table below reproduces the notebook's five-fold default and nested-CV results. Tuning reports also include the final full-development best trial score and selected parameters.
+
+| Model | Default CV mean ± std (gap) | Tuned nested CV mean ± std (gap) | Best full-development trial / parameters |
+|---|---|---|---|
+| Logistic regression | 0.672 ± 0.013 (+0.003) | — | — |
+| Decision tree | 0.610 ± 0.018 (+0.085) | 0.672 ± 0.017 (+0.013) | See that run's report |
+| Random forest | 0.650 ± 0.019 (+0.082) | 0.681 ± 0.015 (+0.009) | See that run's report |
+| Oblique random forest | 0.647 ± 0.011 (+0.114) | 0.679 ± 0.013 (+0.013) | See that run's report |
+| AdaBoost | 0.676 ± 0.012 (+0.006) | 0.682 ± 0.017 (+0.004) | See that run's report |
+
+The tuned ensembles are tied: AdaBoost's 0.001 lead over the random forest is smaller than the fold-to-fold standard deviation, and the paired folds favor different models. Tuning substantially reduces the forests' overfitting gaps; AdaBoost with stumps is already close to its tuned result. 
 
 ## Model evaluation
 
@@ -58,7 +75,7 @@ The CV mean is the number to trust: it uses every development row for validation
 Same folds (`cv.random_state: 42`), only `imputation.numeric_strategy` changed (`knn` = `KNNImputer(n_neighbors=5)`, scaling applied before imputing).
 
 | Model | Holdout median / KNN | CV median | CV KNN | Mean per-fold difference (KNN − median) |
-|---|---|---|---|---|
+|---|---|---|---|
 | Logistic regression | 0.674 / 0.676 | 0.672 ± 0.013 | 0.673 ± 0.013 | +0.0005 |
 | Decision tree | 0.591 / 0.608 | 0.610 ± 0.018 | 0.596 ± 0.014 | -0.013 |
 | Random forest | 0.644 / 0.633 | 0.650 ± 0.018 | 0.647 ± 0.017 | -0.004 |

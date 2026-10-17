@@ -7,7 +7,7 @@ Run with:
 This orchestrates the full pipeline:
     load config -> load data -> clean -> drop duplicates -> lock test set
     -> cross-validate (preprocessing + model) on the development set
-    -> refit final model on all development rows -> save results
+    -> nested CV and tune -> refit selected model on development rows -> save results
 """
 import yaml
 from sklearn.model_selection import StratifiedKFold
@@ -24,6 +24,7 @@ from src.preprocessing import (
 from src.model import build_model
 from src.evaluate import cross_validate_pipeline, cv_report, fairness_report, oof_classification_report
 from src.results import save_run
+from src.tuning import nested_cross_validate, tune_pipeline, tuning_report
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -73,11 +74,55 @@ def main():
         y_dev, y_oof, extras_dev, sensitive_attr=config["data"]["sensitive_attr"]
     )
 
-    # CV only estimates the recipe; the model you'd use is refit on all development rows
-    final_model = pipeline.fit(X_dev, y_dev)
+    tuning_text = ""
+    final_pipeline = pipeline
+    tuning_config = config.get("tuning", {})
+    if tuning_config.get("enabled", False):
+        search_space = tuning_config.get("search_spaces", {}).get(config["model"]["type"])
+        if search_space:
+            inner_cv = StratifiedKFold(
+                n_splits=tuning_config["n_splits"],
+                shuffle=True,
+                random_state=tuning_config["random_state"],
+            )
+            nested_scores, _ = nested_cross_validate(
+                pipeline,
+                X_dev,
+                y_dev,
+                cv,
+                inner_cv,
+                scoring,
+                search_space,
+                tuning_config["n_trials"],
+                tuning_config["random_state"],
+                n_jobs=cv_config.get("n_jobs", 1),
+            )
+            final_pipeline, study = tune_pipeline(
+                pipeline,
+                X_dev,
+                y_dev,
+                inner_cv,
+                scoring,
+                search_space,
+                tuning_config["n_trials"],
+                tuning_config["random_state"],
+                n_jobs=cv_config.get("n_jobs", 1),
+            )
+            tuning_text = tuning_report(study, nested_scores, scoring)
+        else:
+            tuning_text = (
+                f"Tuning skipped for {config['model']['type']}: "
+                "no search space is configured for this model."
+            )
+            print(tuning_text)
+
+    # CV estimates the recipe; refit the selected recipe on all development rows.
+    final_model = final_pipeline.fit(X_dev, y_dev)
     print(f"Final model: {config['model']['type']} refit on all {len(X_dev)} development rows.")
 
     results_dir = config.get("output", {}).get("results_dir", "results")
+    if tuning_text:
+        report += "\n\n" + tuning_text
     path = save_run(results_dir, config, report)
     print(f"Full results saved to {path}")
 
