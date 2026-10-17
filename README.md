@@ -41,25 +41,26 @@ This table is updated after each practical class, so you can always see what cha
 | 3 | EDA and data diagnosis | Diagnosis-driven cleaning applied through `clean_dataset()` and the `diagnostics` section of `config.yaml`: placeholder tokens and out-of-range values (`validity_rules`) become `NaN`, category spellings are canonicalised, duplicate rows/ids and redundant (multicollinear) columns are removed; imputation matched to the missingness mechanism (median for MCAR numerics, most frequent for categoricals) plus `_was_missing` flags for the MNAR columns (`priors_count`, `c_charge_degree`); configurable encoder (`onehot`/`ordinal`/`count`/`target`) and scaler (`none`/`standard`/`minmax`/`robust`) in a `ColumnTransformer` placed inside the model `Pipeline`, so everything is fitted on training rows only; evaluation still a single holdout split. **Observation:** after preprocessing with the class diagnosis, logistic regression beat the decision tree (test accuracy 0.658 vs. 0.605; train/test gap +0.018 vs. +0.189). The large gap shows the tree is overfitting |
 | 4 | Preprocessing recipe + cross-validation | Locked test set (`test_set` in `config.yaml`, 20%, seed 42, never changed); stratified 5-fold CV of the whole pipeline (preprocessing + model) on the development set (`cv` section); out-of-fold predictions for the classification report and fairness check; final model refit on all development rows; row-preserving `clean_dataset()` + training-only `drop_duplicate_rows()`; sklearn `TargetEncoder`, robust scaling; new `dummy` and `random_forest` models; new `knn` numeric imputation option. **Observation:** under 5-fold CV, logistic regression is still the best model (0.672 ± 0.013) and the only one that does not overfit (gap +0.003); the tree (0.610) and the untuned random forest (0.650) both have a train–val gap of about 0.08. A single holdout split was misleading (the tree moved 0.591 -> 0.610 under CV). KNN imputation gave no real improvement over the median, so the median stays|
 | 5 | Leakage-safe hyperparameter tuning | Optuna tunes pipeline parameters using cross-validation of the complete preprocessing/model pipeline; nested stratified CV estimates the tuning procedure on untouched outer folds; the final best recipe is tuned on all development rows and refit there. The locked test set is never used. |
-| 6 | Tree ensembles | Added oblique random forest (bagged sparse-projection trees) and AdaBoost (decision-tree weak learners); selected random forest as the default; configured search spaces for decision trees and all three ensembles; added nested-CV and full-development tuning reports. |
+| 6 | Tree ensembles | Added oblique random forest (bagged sparse-projection trees) and AdaBoost (decision-tree weak learners); configured search spaces for decision trees and all three ensembles; added nested-CV and full-development tuning reports. Select the model to run with `model.type` in `config.yaml` (currently `oblique_random_forest`). |
 
 ## Ensemble evaluation
 
-The table below reproduces the notebook's five-fold default and nested-CV results. Tuning reports also include the final full-development best trial score and selected parameters.
+All six model types were run from this checkout on the same 5,771-row development set, with the configured five-fold CV and (where a search space exists) 30 Optuna trials inside five-fold nested CV. The default and nested-CV columns show mean ± standard deviation and mean train-validation gap. The full-development best-trial score is the maximum of 30 CV scores and is optimistic; use nested CV as the honest tuned estimate. Hyperparameters below are from each fresh full-development tuning run.
 
-| Model | Default CV mean ± std (gap) | Tuned nested CV mean ± std (gap) | Best full-development trial / parameters |
-|---|---|---|---|
-| Logistic regression | 0.672 ± 0.013 (+0.003) | — | — |
-| Decision tree | 0.610 ± 0.018 (+0.085) | 0.672 ± 0.017 (+0.013) | See that run's report |
-| Random forest | 0.650 ± 0.019 (+0.082) | 0.681 ± 0.015 (+0.009) | See that run's report |
-| Oblique random forest | 0.647 ± 0.011 (+0.114) | 0.679 ± 0.013 (+0.013) | See that run's report |
-| AdaBoost | 0.676 ± 0.012 (+0.006) | 0.682 ± 0.017 (+0.004) | See that run's report |
+| Model | Default CV accuracy (mean ± std; gap) | Tuned nested CV accuracy (mean ± std; gap) | Best full-development CV score | Best full-development parameters |
+|---|---|---|---:|---|
+| Dummy | 0.549 ± 0.000 (-0.000) | — | — | — |
+| Logistic regression | 0.672 ± 0.013 (+0.003) | — | — | — |
+| Decision tree | 0.610 ± 0.018 (+0.085) | 0.672 ± 0.017 (+0.013) | 0.679 | depth=6, min leaf=101, criterion=gini |
+| Random forest | 0.650 ± 0.019 (+0.082) | 0.681 ± 0.015 (+0.009) | 0.683 | depth=22, min leaf=42, max features=0.5 |
+| Oblique random forest | 0.647 ± 0.011 (+0.114) | 0.679 ± 0.013 (+0.013) | 0.683 | tree depth=6, tree min leaf=3, projection components=5 |
+| AdaBoost | 0.676 ± 0.012 (+0.006) | 0.682 ± 0.017 (+0.004) | 0.684 | estimator depth=4, estimators=220, learning rate=0.0251 |
 
-The tuned ensembles are tied: AdaBoost's 0.001 lead over the random forest is smaller than the fold-to-fold standard deviation, and the paired folds favor different models. Tuning substantially reduces the forests' overfitting gaps; AdaBoost with stumps is already close to its tuned result. 
+AdaBoost has the highest nested-CV mean at 0.682, but its lead over the random forest (0.681) is only 0.001, so the ensembles are effectively tied at this precision. Tuning substantially reduces the forests' overfitting gaps; AdaBoost with stumps is already close to its tuned result. The selected AdaBoost estimator is still shallow (depth 4) compared with the forest trees (depth 22); the oblique forest uses depth 6 trees and five projected components.
 
 ## Model evaluation
 
-Evaluation uses a locked test set (20%, never touched) plus stratified 5-fold CV of the whole pipeline on the remaining development set. Imputation, encoding and scaling are re-fitted inside every fold, so validation rows never influence them. Holdout = one 75/25 split of the development set (seed 42).
+Evaluation uses a locked test set (20%, never touched) plus stratified 5-fold CV of the whole pipeline on the remaining development set. Imputation, encoding and scaling are re-fitted inside every fold, so validation rows never influence them. The holdout figures below are historical Week 4 results, not results from the current ensemble runs; current like-for-like model comparisons are in the Ensemble evaluation table above.
 
 | Model | Holdout accuracy | CV accuracy (mean ± std) | CV train–val gap |
 |---|---|---|---|

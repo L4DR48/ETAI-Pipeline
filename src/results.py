@@ -15,7 +15,7 @@ def save_run(results_dir: str, config: dict, report_text: str) -> str:
     """
     os.makedirs(results_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     path = os.path.join(results_dir, f"run_{timestamp}.txt")
 
     header = (
