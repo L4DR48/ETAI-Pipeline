@@ -19,18 +19,23 @@ cv:
   n_splits: 5
   shuffle: true
   random_state: 42
-  scoring: "accuracy"
+  metrics: ["accuracy", "balanced_accuracy", "precision", "recall", "f1", "fbeta_2", "roc_auc", "average_precision"]
+  selection_metric: "roc_auc"
   n_jobs: 1             # -1 = all cores (only pays off for slow models, e.g. random forest)
 
 model:
-  type: "oblique_random_forest"   # dummy | logistic_regression | decision_tree | random_forest | oblique_random_forest | adaboost
+  type: "gradient_boosting"   # dummy | logistic_regression | naive_bayes | decision_tree | random_forest | oblique_random_forest | adaboost | gradient_boosting | hist_gradient_boosting
   params:
-    n_estimators: 200
-    n_components: 10
     random_state: 42
-    n_jobs: -1
-    #max_iter:2000
-    #learning_rate: 0.1
+  # class_weight "balanced" weights each class by 1 / its frequency (not supported by
+  # GradientBoostingClassifier or GaussianNB).
+  # logistic_regression:    {max_iter: 2000, class_weight: balanced}
+  # naive_bayes:            {}
+  # decision_tree:          {random_state: 42, class_weight: balanced}
+  # random_forest:          {n_estimators: 200, random_state: 42, n_jobs: -1, class_weight: balanced}
+  # oblique_random_forest:  {n_estimators: 200, n_components: 10, random_state: 42, n_jobs: -1}
+  # adaboost:               {max_depth: 1, n_estimators: 200, learning_rate: 1.0, random_state: 42}
+  # hist_gradient_boosting: {random_state: 42, class_weight: balanced}
 
 
 preprocessing:
@@ -47,10 +52,11 @@ preprocessing:
 
 output:
   results_dir: "results"   # each run's full report is saved here as a timestamped .txt file
+  scoreboard: "results/runs.csv"
 
 tuning:
   enabled: true
-  n_trials: 30
+  n_trials: 5
   n_splits: 5
   random_state: 42
   # Keys are Pipeline parameter names; each trial is scored by CV of the full pipeline.
@@ -71,6 +77,20 @@ tuning:
       model__estimator__max_depth: {type: int, low: 1, high: 8}
       model__n_estimators: {type: int, low: 25, high: 400, log: true}
       model__learning_rate: {type: float, low: 0.01, high: 1.0, log: true}
+    gradient_boosting:
+      model__n_estimators: {type: int, low: 25, high: 500, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.5, log: true}
+      model__max_depth: {type: int, low: 1, high: 6}
+      model__min_samples_leaf: {type: int, low: 1, high: 200, log: true}
+      model__subsample: {type: float, low: 0.5, high: 1.0}
+    hist_gradient_boosting:
+      model__max_iter: {type: int, low: 25, high: 500, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.5, log: true}
+      model__max_leaf_nodes: {type: int, low: 2, high: 63, log: true}
+      model__min_samples_leaf: {type: int, low: 5, high: 200, log: true}
+      model__l2_regularization: {type: float, low: 0.000001, high: 10.0, log: true}
+    naive_bayes:
+      model__var_smoothing: {type: float, low: 0.000000000001, high: 0.000001, log: true}
 
 
 

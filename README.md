@@ -22,10 +22,10 @@ go on.
 │   ├── data.py             # loading
 │   ├── preprocessing.py    # cleaning + train/test split
 │   ├── model.py             # model construction
-│   ├── evaluate.py         # accuracy metrics + fairness check
+│   ├── evaluate.py         # cross-validation metrics, out-of-fold reports + fairness check
 │   ├── tuning.py           # Optuna search + nested cross-validation
-│   └── results.py          # saves each run's report to disk
-├── results/                # created automatically -- one file per run (not tracked in git)
+│   └── results.py          # saves reports and appends scoreboard rows
+├── results/                # timestamped reports + runs.csv (local outputs; not tracked in git)
 └── data/
     ├── compas_two_year_recidivism.csv
     └── README.md            # problem description + full data dictionary
@@ -41,9 +41,10 @@ This table is updated after each practical class, so you can always see what cha
 | 3 | EDA and data diagnosis | Diagnosis-driven cleaning applied through `clean_dataset()` and the `diagnostics` section of `config.yaml`: placeholder tokens and out-of-range values (`validity_rules`) become `NaN`, category spellings are canonicalised, duplicate rows/ids and redundant (multicollinear) columns are removed; imputation matched to the missingness mechanism (median for MCAR numerics, most frequent for categoricals) plus `_was_missing` flags for the MNAR columns (`priors_count`, `c_charge_degree`); configurable encoder (`onehot`/`ordinal`/`count`/`target`) and scaler (`none`/`standard`/`minmax`/`robust`) in a `ColumnTransformer` placed inside the model `Pipeline`, so everything is fitted on training rows only; evaluation still a single holdout split. **Observation:** after preprocessing with the class diagnosis, logistic regression beat the decision tree (test accuracy 0.658 vs. 0.605; train/test gap +0.018 vs. +0.189). The large gap shows the tree is overfitting |
 | 4 | Preprocessing recipe + cross-validation | Locked test set (`test_set` in `config.yaml`, 20%, seed 42, never changed); stratified 5-fold CV of the whole pipeline (preprocessing + model) on the development set (`cv` section); out-of-fold predictions for the classification report and fairness check; final model refit on all development rows; row-preserving `clean_dataset()` + training-only `drop_duplicate_rows()`; sklearn `TargetEncoder`, robust scaling; new `dummy` and `random_forest` models; new `knn` numeric imputation option. **Observation:** under 5-fold CV, logistic regression is still the best model (0.672 ± 0.013) and the only one that does not overfit (gap +0.003); the tree (0.610) and the untuned random forest (0.650) both have a train–val gap of about 0.08. A single holdout split was misleading (the tree moved 0.591 -> 0.610 under CV). KNN imputation gave no real improvement over the median, so the median stays|
 | 5 | Leakage-safe hyperparameter tuning | Optuna tunes pipeline parameters using cross-validation of the complete preprocessing/model pipeline; nested stratified CV estimates the tuning procedure on untouched outer folds; the final best recipe is tuned on all development rows and refit there. The locked test set is never used. |
-| 6 | Tree ensembles | Added oblique random forest (bagged sparse-projection trees) and AdaBoost (decision-tree weak learners); configured search spaces for decision trees and all three ensembles; added nested-CV and full-development tuning reports. Select the model to run with `model.type` in `config.yaml` (currently `oblique_random_forest`). |
+| 6 | Tree ensembles | Added oblique random forest (bagged sparse-projection trees) and AdaBoost (decision-tree weak learners); configured search spaces for decision trees and all three ensembles; added nested-CV and full-development tuning reports. Select the model to run with `model.type` in `config.yaml` (the Week 6 default was `oblique_random_forest`). |
+| 7 | Probability-based evaluation and model comparison | Added Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes; reports eight classification metrics from out-of-fold probabilities, the confusion matrix and fairness checks; tunes on ROC-AUC, estimates tuning honestly with nested CV, and appends every run (including the dummy floor and untuned score) to `results/runs.csv`. |
 
-## Ensemble evaluation
+## Week 6 ensemble evaluation (historical accuracy benchmark)
 
 All six model types were run from this checkout on the same 5,771-row development set, with the configured five-fold CV and (where a search space exists) 30 Optuna trials inside five-fold nested CV. The default and nested-CV columns show mean ± standard deviation and mean train-validation gap. The full-development best-trial score is the maximum of 30 CV scores and is optimistic; use nested CV as the honest tuned estimate. Hyperparameters below are from each fresh full-development tuning run.
 
@@ -57,6 +58,24 @@ All six model types were run from this checkout on the same 5,771-row developmen
 | AdaBoost | 0.676 ± 0.012 (+0.006) | 0.682 ± 0.017 (+0.004) | 0.684 | estimator depth=4, estimators=220, learning rate=0.0251 |
 
 AdaBoost has the highest nested-CV mean at 0.682, but its lead over the random forest (0.681) is only 0.001, so the ensembles are effectively tied at this precision. Tuning substantially reduces the forests' overfitting gaps; AdaBoost with stumps is already close to its tuned result. The selected AdaBoost estimator is still shallow (depth 4) compared with the forest trees (depth 22); the oblique forest uses depth 6 trees and five projected components.
+
+## Week 7 model scoreboard
+
+All nine models below use the same cleaned development data, preprocessing, and five stratified folds. Tuned rows show the nested-CV ROC-AUC (five Optuna trials per fold); the untuned ROC-AUC and dummy floor use those same outer folds.
+
+**Selection metric: ROC-AUC.** It measures how well the model ranks reoffenders above non-reoffenders across decision thresholds, which avoids choosing a particular classification threshold during model selection. Accuracy, balanced accuracy, precision, recall, F1, F2, and average precision are reported alongside it, while the confusion matrix and fairness check use an explicit 0.5 threshold.
+
+| Model | Tuned? | ROC-AUC (mean ± std) | Untuned ROC-AUC | Dummy floor |
+|---|---:|---:|---:|---:|
+| Oblique random forest | Yes | 0.728 ± 0.012 | 0.685 | 0.500 |
+| Random forest | Yes | 0.727 ± 0.016 | 0.684 | 0.500 |
+| Gradient Boosting | Yes | 0.727 ± 0.014 | 0.727 | 0.500 |
+| AdaBoost | Yes | 0.727 ± 0.014 | 0.723 | 0.500 |
+| HistGradientBoosting | Yes | 0.726 ± 0.014 | 0.717 | 0.500 |
+| Logistic regression | No | 0.718 ± 0.014 | 0.718 | 0.500 |
+| Decision tree | Yes | 0.712 ± 0.014 | 0.610 | 0.500 |
+| Naive Bayes | Yes | 0.685 ± 0.011 | 0.685 | 0.500 |
+| Dummy | No | 0.500 ± 0.000 | 0.500 | 0.500 |
 
 ## Model evaluation
 
