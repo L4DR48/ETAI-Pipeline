@@ -24,9 +24,10 @@ cv:
   n_jobs: 1             # -1 = all cores (only pays off for slow models, e.g. random forest)
 
 model:
-  type: "gradient_boosting"   # dummy | logistic_regression | naive_bayes | decision_tree | random_forest | oblique_random_forest | adaboost | gradient_boosting | hist_gradient_boosting
+  type: "xgboost"   # dummy | logistic_regression | naive_bayes | decision_tree | random_forest | oblique_random_forest | adaboost | gradient_boosting | hist_gradient_boosting | xgboost
   params:
     random_state: 42
+    n_jobs: -1
   # class_weight "balanced" weights each class by 1 / its frequency (not supported by
   # GradientBoostingClassifier or GaussianNB).
   # logistic_regression:    {max_iter: 2000, class_weight: balanced}
@@ -38,8 +39,17 @@ model:
   # hist_gradient_boosting: {random_state: 42, class_weight: balanced}
 
 
+# Learned step between preprocessing and the model: keeps the features that at least
+# min_votes of three models (random forest, gradient boosting, L1 logistic regression) choose.
+feature_selection:
+  enabled: true
+  min_votes: 2                                      # 1 (keep almost all) .. 3 (keep only unanimous)
+  random_state: 42
+  search_space:                                     # tuned together with the model when tuning is on
+    select__min_votes: {type: int, low: 1, high: 3}
+
 preprocessing:
-  encoder: "target"             # onehot | ordinal | count | target
+  encoder: "target"            # onehot | ordinal | count | target
   scaler: "robust"              # none | standard | minmax | robust
   random_state: 42
   numeric_features: ["age", "juv_fel_count", "juv_misd_count", "juv_other_count", "priors_count"]
@@ -89,6 +99,16 @@ tuning:
       model__max_leaf_nodes: {type: int, low: 2, high: 63, log: true}
       model__min_samples_leaf: {type: int, low: 5, high: 200, log: true}
       model__l2_regularization: {type: float, low: 0.000001, high: 10.0, log: true}
+    xgboost:
+      model__n_estimators: {type: int, low: 50, high: 600, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.3, log: true}
+      model__max_depth: {type: int, low: 1, high: 8}
+      model__min_child_weight: {type: float, low: 1.0, high: 50.0, log: true}
+      model__subsample: {type: float, low: 0.5, high: 1.0}
+      model__colsample_bytree: {type: float, low: 0.5, high: 1.0}
+      model__reg_lambda: {type: float, low: 0.01, high: 10.0, log: true}
+      model__reg_alpha: {type: float, low: 0.001, high: 10.0, log: true}
+      model__gamma: {type: float, low: 0.0, high: 5.0}
     naive_bayes:
       model__var_smoothing: {type: float, low: 0.000000000001, high: 0.000001, log: true}
 

@@ -1,4 +1,6 @@
 """Entry point for the predictive pipeline."""
+import shutil
+import tempfile
 from datetime import datetime
 
 import optuna
@@ -14,7 +16,7 @@ from src.evaluate import (
     fairness_report,
     oof_classification_report,
 )
-from src.model import build_model
+from src.model import build_model, build_pipeline
 from src.preprocessing import (
     build_preprocessor,
     clean_dataset,
@@ -72,11 +74,12 @@ def main():
         f"Data:  {len(X_dev)} development rows   |   "
         f"{len(X_test)} test rows locked away (not used)"
     )
-
-    pipeline = Pipeline([
-        ("prep", build_preprocessor(config["preprocessing"])),
-        ("model", build_model(config["model"])),
-    ])
+    selection_config = config.get("feature_selection", {})
+    selection_enabled = bool(selection_config.get("enabled", False))
+    cache_dir = tempfile.mkdtemp(prefix="pipeline_cache_")
+    pipeline = build_pipeline(
+        config["preprocessing"], config["model"], selection_config, memory=cache_dir
+    )
     floor_pipeline = Pipeline([
         ("prep", build_preprocessor(config["preprocessing"])),
         ("model", build_model({"type": "dummy"})),
@@ -112,6 +115,8 @@ def main():
     tuning_config = config.get("tuning", {})
     tuning_enabled = tuning_config.get("enabled", False)
     search_space = tuning_config.get("search_spaces", {}).get(model_type)
+    if search_space and selection_enabled:
+        search_space = {**search_space, **selection_config.get("search_space", {})}
     study = None
 
     if tuning_enabled and search_space:
@@ -163,7 +168,7 @@ def main():
         )
         print("  Chosen hyperparameters:")
         for name, value in study.best_params.items():
-            label = name.replace("model__", "")
+            label = name.replace("model__", "").replace("select__", "select.")
             if isinstance(value, float):
                 print(f"    {label:<24s} {value:.4g}")
             else:
@@ -191,6 +196,12 @@ def main():
     )
 
     pipeline.fit(X_dev, y_dev)
+    if selection_enabled:
+        kept = list(pipeline[:-1].get_feature_names_out())
+        n_total = len(pipeline["prep"].get_feature_names_out())
+        kept_line = f"Features kept ({len(kept)} of {n_total}): {', '.join(kept)}"
+        print(kept_line)
+        report += "\n" + kept_line
     refit = f"Final model: {model_type} refit on all {len(X_dev)} development rows."
     print(refit)
     report += "\n" + refit + "\n"
@@ -202,6 +213,9 @@ def main():
         "tuned": bool(study),
         "encoder": config["preprocessing"]["encoder"],
         "scaler": config["preprocessing"]["scaler"],
+        "feature_selection": (
+            f"vote(min_votes={pipeline['select'].min_votes})" if selection_enabled else "none"
+        ),
         "params": str(config["model"].get("params")),
         "tuned_params": str(study.best_params) if study else "",
         "metric": selection_metric,
@@ -219,7 +233,7 @@ def main():
     same = runs[(runs["data"] == row["data"]) & (runs["metric"] == selection_metric)]
     board = (
         same.sort_values("mean", ascending=False)[
-            ["run", "model", "tuned", "encoder", "scaler", "mean", "std", "untuned", "floor"]
+            ["run", "model", "tuned", "feature_selection", "encoder", "scaler", "mean", "std", "untuned", "floor"]
         ]
         .rename(columns={"mean": selection_metric})
         .to_string(index=False, float_format=lambda value: f"{value:.3f}")
@@ -234,6 +248,7 @@ def main():
         run_id,
     )
     print(f"Full results saved to {path}")
+    shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

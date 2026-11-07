@@ -31,6 +31,7 @@ def save_run(
         f"Model: {config['model']['type']}  params={config['model'].get('params')}\n"
         f"Preprocessing: encoder={config['preprocessing']['encoder']}  scaler={config['preprocessing']['scaler']}  "
         f"imputation={config['preprocessing'].get('imputation')}\n"
+        f"Feature selection: {config.get('feature_selection')}\n"
         f"Locked test set: size={config['test_set']['size']}  random_state={config['test_set']['random_state']}\n"
         f"CV metrics: {config['cv']['metrics']}\n"
         f"Selection metric: {config['cv']['selection_metric']}\n"

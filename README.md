@@ -21,7 +21,7 @@ go on.
 ├── src/
 │   ├── data.py             # loading
 │   ├── preprocessing.py    # cleaning + train/test split
-│   ├── model.py             # model construction
+│   ├── model.py             # model construction + VoteSelector feature selection + build_pipeline()
 │   ├── evaluate.py         # cross-validation metrics, out-of-fold reports + fairness check
 │   ├── tuning.py           # Optuna search + nested cross-validation
 │   └── results.py          # saves reports and appends scoreboard rows
@@ -43,6 +43,7 @@ This table is updated after each practical class, so you can always see what cha
 | 5 | Leakage-safe hyperparameter tuning | Optuna tunes pipeline parameters using cross-validation of the complete preprocessing/model pipeline; nested stratified CV estimates the tuning procedure on untouched outer folds; the final best recipe is tuned on all development rows and refit there. The locked test set is never used. |
 | 6 | Tree ensembles | Added oblique random forest (bagged sparse-projection trees) and AdaBoost (decision-tree weak learners); configured search spaces for decision trees and all three ensembles; added nested-CV and full-development tuning reports. Select the model to run with `model.type` in `config.yaml` (the Week 6 default was `oblique_random_forest`). |
 | 7 | Probability-based evaluation and model comparison | Added Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes; reports eight classification metrics from out-of-fold probabilities, the confusion matrix and fairness checks; tunes on ROC-AUC, estimates tuning honestly with nested CV, and appends every run (including the dummy floor and untuned score) to `results/runs.csv`. |
+| 8 | XGBoost and feature selection | Added `XGBClassifier` and `VoteSelector`. `build_pipeline()` assembles preprocessing, selection and model as one Pipeline, so selection is re-fitted on the training rows of every fold; with tuning on, `select__min_votes` joins the model's search space and is estimated by nested CV. The fitted preprocessing/selection steps are cached in a temporary folder (deleted at the end of the run) so tuning does not refit them in every trial. `main.py` prints the features the final model keeps. The scoreboard has a `feature_selection` column and the report header records the setting; `corrected_paired_test()` (in `src/evaluate.py`) compares two runs on the same folds. |
 
 ## Week 6 ensemble evaluation (historical accuracy benchmark)
 
@@ -76,6 +77,21 @@ All nine models below use the same cleaned development data, preprocessing, and 
 | Decision tree | Yes | 0.712 ± 0.014 | 0.610 | 0.500 |
 | Naive Bayes | Yes | 0.685 ± 0.011 | 0.685 | 0.500 |
 | Dummy | No | 0.500 ± 0.000 | 0.500 | 0.500 |
+
+## Week 8 feature selection
+
+Selection looks at the labels, so it is a Pipeline step  re-fitted on the training rows of each fold; selecting on all rows first and cross-validating afterwards would leak the validation labels. 
+
+XGBoost was tuned twice (5 Optuna trials per fold, nested 5-fold CV, same folds), once with and once without selection:
+
+| Run | Nested-CV ROC-AUC (mean ± std) | Untuned ROC-AUC | `min_votes` chosen (full-development tuning) |
+|---|---|---|---|
+| XGBoost, no selection | 0.726 ± 0.014 | 0.706 | — |
+| XGBoost + `VoteSelector` | 0.725 ± 0.013 | 0.706 | 1 |
+
+Corrected paired t-test on the five outer folds: mean difference (selection − none) = −0.0003, selection wins 2 of 5 folds, t = −0.14, p = 0.90. The final model with selection keeps **2 of the 10 preprocessed features**: `numeric__age` and `numeric__priors_count`.
+
+**Observation:** the model with only two features scores as well as the one with all ten, so the extra columns carry almost no use for XGBoost. Because the smaller model is as good, faster to explain and cheaper to fit, selection is worth keeping on. This data has only 10 columns and none are pure noise, so selection cannot improve the score here as it does when many useless columns are added. Votes on the full development set before tuning were 3/3 for `age` and `priors_count` and 0 for every other column, including the categorical columns after target encoding.
 
 ## Model evaluation
 
